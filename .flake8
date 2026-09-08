@@ -1,0 +1,49 @@
+# Linting and Code Quality Configuration for flake8
+# Run: flake8 .
+
+[flake8]
+max-line-length = 100
+exclude = 
+    .git,
+    __pycache__,
+    venv,
+    env,
+    .venv,
+    build,
+    dist,
+    *.egg-info,
+    .pytest_cache,
+    .mypy_cache,
+    archive
+
+# Error codes to ignore
+ignore = 
+    E203,  # Whitespace before ':' (conflicts with black)
+    E501,  # Line too long (handled by max-line-length)
+    W503,  # Line break before binary operator (black style)
+    E402,  # Module level import not at top (acceptable in some cases)
+
+# Complexity warnings
+max-complexity = 15
+
+# Per-file ignores
+per-file-ignores =
+    __init__.py:F401,F403  # Allow unused imports in __init__ files
+    tests/*:F401,F811      # Allow redefinitions and unused imports in tests
+
+# Select specific error codes to check
+select = 
+    E,    # pycodestyle errors
+    W,    # pycodestyle warnings
+    F,    # pyflakes
+    C,    # mccabe complexity
+    B,    # flake8-bugbear
+    
+# Show source code for errors
+show-source = True
+
+# Count errors
+count = True
+
+# Display statistics
+statistics = True

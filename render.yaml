@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: color-visualizer
+    env: python
+    buildCommand: bash build.sh
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    plan: starter
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.17

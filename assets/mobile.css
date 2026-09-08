@@ -1,0 +1,16 @@
+/* mobile.css - Isolated Mobile and Sidebar Styles */
+
+@media (max-width: 1024px) {
+
+    /* 1. Native mobile sidebar triggers allowed */
+    [data-testid="stSidebarOverlay"] {
+        display: block !important;
+        visibility: visible !important;
+    }
+
+    /* 2. Native Sidebar Override */
+    [data-testid="stSidebar"] {
+        width: 300px !important;
+        max-width: 80vw !important;
+    }
+}
