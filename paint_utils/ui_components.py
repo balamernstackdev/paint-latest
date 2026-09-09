@@ -1549,13 +1549,16 @@ def render_sidebar(sam, device_str):
                     safe_rerun()
         
         if uploaded_file is not None:
-            # We enforce reprocessing if the file_key changes OR if `image` state is None 
+            import hashlib
+            uploaded_file.seek(0)
+            file_bytes_raw = uploaded_file.read()
+            file_hash = hashlib.sha256(file_bytes_raw).hexdigest()
+            
+            # We enforce reprocessing if the file_hash changes OR if `image` state is None 
             # (which happens if they wiped out state but Streamlit kept the uploaded_file instance natively)
-            file_key = getattr(uploaded_file, "file_id", f"{uploaded_file.name}_{uploaded_file.size}")
-            if st.session_state.get("image_path") != file_key or st.session_state.get("image") is None:
+            if st.session_state.get("image_path") != file_hash or st.session_state.get("image") is None:
                 st.toast(f"📸 Loading New Image: {uploaded_file.name}", icon="🔄")
-                uploaded_file.seek(0)
-                file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+                file_bytes = np.asarray(bytearray(file_bytes_raw), dtype=np.uint8)
                 image = cv2.cvtColor(cv2.imdecode(file_bytes, 1), cv2.COLOR_BGR2RGB)
                 st.session_state["image_original"] = image.copy()
                 from app_config.constants import PerformanceConfig
@@ -1566,7 +1569,7 @@ def render_sidebar(sam, device_str):
                     image = cv2.resize(image, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
                 st.session_state["image"] = image
                 st.session_state["image_gray"] = None
-                st.session_state["image_path"] = file_key
+                st.session_state["image_path"] = file_hash
                 st.session_state["masks"] = []
                 st.session_state["pending_selection"] = None
                 st.session_state["pending_boxes"] = []

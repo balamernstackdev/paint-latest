@@ -178,51 +178,30 @@ def cb_apply_pending(increment_canvas=True, silent=False):
             # 2. IDENTIFY SAME REGION (RECOLORING LOGIC)
             best_layer_idx = -1
             
-            # 2a. Direct Hit Test (Most accurate for Point Clicks)
-            ref_x, ref_y = new_mask.get('point', (None, None))
-            if ref_x is not None and ref_y is not None:
-                # Search backwards (top to bottom)
-                for i in range(len(st.session_state["masks"]) - 1, -1, -1):
-                    layer = st.session_state["masks"][i]
-                    if layer.get("visible", True):
-                        existing = layer['mask']
-                        if 0 <= ref_y < existing.shape[0] and 0 <= ref_x < existing.shape[1]:
-                            # Sparse matrix indexing can be slow, but for a single point it's acceptable
-                            val = existing[ref_y, ref_x]
-                            if val > 0:
-                                best_layer_idx = i
-                                print(f"DEBUG: Direct point hit detected on existing layer {i}")
-                                break
-            
-            # 2b. Fallback to IoU (For Box Tool or edge cases)
+            # 2a. Remove Direct Hit Test - Use ONLY IoU matching
             best_iou = 0
-            if best_layer_idx == -1:
-                is_point_click = (ref_x is not None and ref_y is not None)
-                for i, layer in enumerate(st.session_state["masks"]):
-                    if layer.get("visible", True):
-                        existing = layer['mask']
-                        if sparse.issparse(existing):
-                            existing = existing.toarray()
-                        
-                        if existing.shape != mask_uint8.shape:
-                            existing = cv2.resize(existing.astype(np.uint8), (mask_uint8.shape[1], mask_uint8.shape[0]), interpolation=cv2.INTER_NEAREST)
-                        
-                        existing_bool = existing.astype(bool)
-                        new_bool = mask_uint8.astype(bool)
-                        
-                        intersection = np.logical_and(existing_bool, new_bool).sum()
-                        union = np.logical_or(existing_bool, new_bool).sum()
-                        iou = intersection / union if union > 0 else 0
-                        
-                        # We only want to recolor if the regions are fundamentally the same.
-                        # If a point click missed existing layers, we strongly bias towards a NEW layer (IoU > 0.90 to override).
-                        # For Box/Poly tools, IoU > 0.75 is sufficient to be considered a recolor.
-                        req_iou = 0.90 if is_point_click else 0.75
-                        
-                        if iou > req_iou:
-                            if iou > best_iou:
-                                best_iou = iou
-                                best_layer_idx = i
+            for i, layer in enumerate(st.session_state["masks"]):
+                if layer.get("visible", True):
+                    existing = layer['mask']
+                    if sparse.issparse(existing):
+                        existing = existing.toarray()
+                    
+                    if existing.shape != mask_uint8.shape:
+                        existing = cv2.resize(existing.astype(np.uint8), (mask_uint8.shape[1], mask_uint8.shape[0]), interpolation=cv2.INTER_NEAREST)
+                    
+                    existing_bool = existing.astype(bool)
+                    new_bool = mask_uint8.astype(bool)
+                    
+                    intersection = np.logical_and(existing_bool, new_bool).sum()
+                    union = np.logical_or(existing_bool, new_bool).sum()
+                    iou = intersection / union if union > 0 else 0
+                    
+                    # LAYER_MATCH_IOU_THRESHOLD = 0.35
+                    # Do not use 'click is inside existing layer -> recolor'
+                    if iou >= 0.35:
+                        if iou > best_iou:
+                            best_iou = iou
+                            best_layer_idx = i
             
             if best_layer_idx != -1:
                 # 3a. SAME REGION -> UPDATE Color (Recolor)
@@ -235,14 +214,8 @@ def cb_apply_pending(increment_canvas=True, silent=False):
                 # Do NOT subtract or create a new layer.
             else:
                 # 3b. DIFFERENT REGION -> CREATE NEW MASK & PROTECT EXISTING
-                print(f"DEBUG: DIFFERENT REGION detected. Creating new layer with protection.")
-                # SMALL morphological closing to fill tiny holes and discontinuities
-                kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-                mask_uint8 = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel_close)
-                
-                # SMALL mask dilation (1-2 pixels) at ORIGINAL resolution to reach visual boundary
-                kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-                mask_uint8 = cv2.dilate(mask_uint8, kernel_dilate, iterations=1)
+                print(f"DEBUG: DIFFERENT REGION detected (IoU: {best_iou:.2f}). Creating new layer with protection.")
+                # Removed artificial dilation/closing to preserve the strict boundary refinement from generate_mask
                 
                 # Edge-Aware Refinement & Subtract Existing Painted Masks
                 for layer in st.session_state["masks"]:

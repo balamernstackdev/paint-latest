@@ -128,6 +128,10 @@ class ColorTransferEngine:
         else:
             # Legacy mode: fixed blur
             mask_soft = cv2.GaussianBlur(mask_float, ColorizerConfig.BLUR_KERNEL_SIZE, 0)
+            
+        # HARD SAFETY RULE: Absolutely no bleeding outside original final_mask
+        # Forces alpha = 0 where original mask = 0
+        mask_soft = mask_soft * mask_float
         
         mask_3ch = np.stack([mask_soft] * 3, axis=-1)
         
