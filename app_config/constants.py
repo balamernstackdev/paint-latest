@@ -134,8 +134,8 @@ class ColorizerConfig:
     
     # --- Mask Processing ---
     # Number of dilation iterations to fill small gaps
-    # Optimized for realistic coverage without bleeding
-    DILATION_ITERATIONS = 1
+    # Optimized for realistic coverage without bleeding. Now handled at mask generation time.
+    DILATION_ITERATIONS = 0
     
     # Kernel size for dilation operations
     DILATION_KERNEL_SIZE = (3, 3)

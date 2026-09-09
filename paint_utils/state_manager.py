@@ -11,7 +11,8 @@ def initialize_session_state():
         "image_original": None, # Full resolution original
         "file_name": None,
         "masks": [],
-        "masks_redo": [],
+        "history": [],      # Full state history for reliable undo/redo
+        "masks_redo": [],   # Full state redo stack
         "selection_op": "Add",
         "is_wall_only": False,
         "selection_softness": 0,
@@ -145,16 +146,121 @@ def cb_apply_pending(increment_canvas=True, silent=False):
                         st.toast("⚠️ selected area didn't overlap with any paint.", icon="ℹ️")
                     else:
                         st.toast("✅ Paint Erased!", icon="🧹")
+                        
+                # Save state for undo ONLY if something was erased
+                if cleaned_any:
+                    if "history" not in st.session_state: st.session_state["history"] = []
+                    # We save the state AFTER the erase. Wait, we should save state BEFORE the erase!
+                    # Actually, the logic to save state must happen before we mutate masks.
+                    pass # We will handle state saving below.
             else:
                 if not silent:
                     st.toast("⚠️ Nothing to erase! The canvas is clean.", icon="✨")
         
         else:
             # ADD Mode (Default)
-            print(f"DEBUG: ADD mode -> Creating new layer")
-            st.session_state["masks"].append(new_mask)
+            print(f"DEBUG: ADD mode -> Creating or Updating layer")
             
-        st.session_state["masks_redo"] = [] # Clear redo stack on new action
+            # --- SAVE HISTORY BEFORE MUTATION ---
+            if "history" not in st.session_state: st.session_state["history"] = []
+            current_snapshot = [dict(m) for m in st.session_state.get("masks", [])]
+            st.session_state["history"].append(current_snapshot)
+            st.session_state["masks_redo"] = [] # Clear redo stack
+            
+            # --- APPLY EDGE COVERAGE FIX ---
+            # 1. Extract dense mask
+            mask_dense = new_mask['mask']
+            if sparse.issparse(mask_dense):
+                mask_dense = mask_dense.toarray()
+            
+            mask_uint8 = mask_dense.astype(np.uint8)
+            
+            # 2. IDENTIFY SAME REGION (RECOLORING LOGIC)
+            best_layer_idx = -1
+            
+            # 2a. Direct Hit Test (Most accurate for Point Clicks)
+            ref_x, ref_y = new_mask.get('point', (None, None))
+            if ref_x is not None and ref_y is not None:
+                # Search backwards (top to bottom)
+                for i in range(len(st.session_state["masks"]) - 1, -1, -1):
+                    layer = st.session_state["masks"][i]
+                    if layer.get("visible", True):
+                        existing = layer['mask']
+                        if 0 <= ref_y < existing.shape[0] and 0 <= ref_x < existing.shape[1]:
+                            # Sparse matrix indexing can be slow, but for a single point it's acceptable
+                            val = existing[ref_y, ref_x]
+                            if val > 0:
+                                best_layer_idx = i
+                                print(f"DEBUG: Direct point hit detected on existing layer {i}")
+                                break
+            
+            # 2b. Fallback to IoU (For Box Tool or edge cases)
+            best_iou = 0
+            if best_layer_idx == -1:
+                is_point_click = (ref_x is not None and ref_y is not None)
+                for i, layer in enumerate(st.session_state["masks"]):
+                    if layer.get("visible", True):
+                        existing = layer['mask']
+                        if sparse.issparse(existing):
+                            existing = existing.toarray()
+                        
+                        if existing.shape != mask_uint8.shape:
+                            existing = cv2.resize(existing.astype(np.uint8), (mask_uint8.shape[1], mask_uint8.shape[0]), interpolation=cv2.INTER_NEAREST)
+                        
+                        existing_bool = existing.astype(bool)
+                        new_bool = mask_uint8.astype(bool)
+                        
+                        intersection = np.logical_and(existing_bool, new_bool).sum()
+                        union = np.logical_or(existing_bool, new_bool).sum()
+                        iou = intersection / union if union > 0 else 0
+                        
+                        # We only want to recolor if the regions are fundamentally the same.
+                        # If a point click missed existing layers, we strongly bias towards a NEW layer (IoU > 0.90 to override).
+                        # For Box/Poly tools, IoU > 0.75 is sufficient to be considered a recolor.
+                        req_iou = 0.90 if is_point_click else 0.75
+                        
+                        if iou > req_iou:
+                            if iou > best_iou:
+                                best_iou = iou
+                                best_layer_idx = i
+            
+            if best_layer_idx != -1:
+                # 3a. SAME REGION -> UPDATE Color (Recolor)
+                print(f"DEBUG: SAME REGION detected (IoU: {best_iou:.2f}). Recoloring layer {best_layer_idx}.")
+                st.session_state["masks"][best_layer_idx]['color'] = st.session_state["picked_color"]
+                st.session_state["masks"][best_layer_idx]['refinement'] = st.session_state.get("selection_refinement", 0)
+                st.session_state["masks"][best_layer_idx]['softness'] = st.session_state.get("selection_softness", 0)
+                st.session_state["masks"][best_layer_idx]['opacity'] = st.session_state.get("selection_highlight_opacity", 1.0)
+                st.session_state["masks"][best_layer_idx]['finish'] = st.session_state.get("selection_finish", 'Standard')
+                # Do NOT subtract or create a new layer.
+            else:
+                # 3b. DIFFERENT REGION -> CREATE NEW MASK & PROTECT EXISTING
+                print(f"DEBUG: DIFFERENT REGION detected. Creating new layer with protection.")
+                # SMALL morphological closing to fill tiny holes and discontinuities
+                kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                mask_uint8 = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel_close)
+                
+                # SMALL mask dilation (1-2 pixels) at ORIGINAL resolution to reach visual boundary
+                kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                mask_uint8 = cv2.dilate(mask_uint8, kernel_dilate, iterations=1)
+                
+                # Edge-Aware Refinement & Subtract Existing Painted Masks
+                for layer in st.session_state["masks"]:
+                    if layer.get("visible", True):
+                        existing = layer['mask']
+                        if sparse.issparse(existing):
+                            existing = existing.toarray()
+                        
+                        if existing.shape != mask_uint8.shape:
+                            existing = cv2.resize(existing.astype(np.uint8), (mask_uint8.shape[1], mask_uint8.shape[0]), interpolation=cv2.INTER_NEAREST) > 0
+                        
+                        # Subtract existing mask
+                        mask_uint8 = mask_uint8 & ~existing.astype(bool)
+                
+                # Re-compress and store
+                new_mask['mask'] = sparse.csc_matrix(mask_uint8)
+                st.session_state["masks"].append(new_mask)
+            
         st.session_state["pending_selection"] = None
         st.session_state["pending_boxes"] = []
         st.session_state["render_id"] += 1
@@ -175,10 +281,16 @@ def cb_cancel_pending():
     st.session_state["canvas_raw"] = {} # Force clear cached objects
 
 def cb_undo():
-    """Undo last paint layer with automatic memory cleanup."""
-    if st.session_state["masks"]:
-        last_mask = st.session_state["masks"].pop()
-        st.session_state["masks_redo"].append(last_mask)
+    """Undo last paint layer/action with automatic memory cleanup."""
+    if "history" in st.session_state and st.session_state["history"]:
+        # Save current to redo
+        current_state = [dict(m) for m in st.session_state.get("masks", [])]
+        st.session_state["masks_redo"].append(current_state)
+        
+        # Pop from history
+        previous_state = st.session_state["history"].pop()
+        st.session_state["masks"] = previous_state
+        
         st.session_state["render_id"] += 1
         st.session_state["canvas_id"] = st.session_state.get("canvas_id", 0) + 1
         
@@ -187,15 +299,27 @@ def cb_undo():
             cleanup_session_caches(aggressive=False)
 
 def cb_redo():
-    """Redo the last undone paint layer."""
+    """Redo the last undone paint layer/action."""
     if st.session_state.get("masks_redo"):
-        mask = st.session_state["masks_redo"].pop()
-        st.session_state["masks"].append(mask)
+        # Save current to history
+        current_state = [dict(m) for m in st.session_state.get("masks", [])]
+        if "history" not in st.session_state:
+            st.session_state["history"] = []
+        st.session_state["history"].append(current_state)
+        
+        # Pop from redo
+        next_state = st.session_state["masks_redo"].pop()
+        st.session_state["masks"] = next_state
+        
         st.session_state["render_id"] += 1
         st.session_state["canvas_id"] = st.session_state.get("canvas_id", 0) + 1
 
 def cb_clear_all():
     """Clear all paint layers and perform memory cleanup."""
+    if st.session_state.get("masks"):
+        if "history" not in st.session_state: st.session_state["history"] = []
+        st.session_state["history"].append([dict(m) for m in st.session_state["masks"]])
+        
     st.session_state["masks"] = []
     st.session_state["masks_redo"] = []
     
@@ -206,7 +330,11 @@ def cb_clear_all():
 
 def cb_delete_layer(idx):
     if st.session_state.get("masks") and 0 <= idx < len(st.session_state["masks"]):
+        if "history" not in st.session_state: st.session_state["history"] = []
+        st.session_state["history"].append([dict(m) for m in st.session_state["masks"]])
+        
         st.session_state["masks"].pop(idx)
         st.session_state["selected_layer_idx"] = None
+        st.session_state["masks_redo"] = []
         st.session_state["render_id"] += 1
         st.session_state["canvas_id"] = st.session_state.get("canvas_id", 0) + 1

@@ -172,7 +172,7 @@
             try {
                 const mb = parent.document.querySelector('.main .block-container');
                 if (mb) { const r = mb.getBoundingClientRect(); if (r.width > 200) availW2 = Math.floor(r.width); }
-            } catch(e) {}
+            } catch (e) { }
             if (winW2 < 1024) {
                 baseScale = (availW2 - 4) / CWIDTH;
             } else {

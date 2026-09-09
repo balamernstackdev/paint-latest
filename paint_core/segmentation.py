@@ -202,34 +202,8 @@ class SegmentationEngine:
                     
                     print(f"Selected mask with door_score={best_door_score}")
                     
-                    # SAFETY MARGIN: If we detected a door/window (score >= 5), apply erosion
-                    # to create a margin that prevents bleeding onto adjacent walls
-                    if best_door_score >= 5:
-                        # Calculate erosion strength based on mask size
-                        mask_area = np.sum(best_mask)
-                        area_ratio = mask_area / image_area
-                        
-                        # REDUCED EROSION STRENGTH to prevent gaps (User Feedback)
-                        if area_ratio < 0.05:  # Very small (< 5%)
-                            kernel_size = 3    
-                            iterations = 1     
-                        elif area_ratio < 0.10:  # (Small < 10%)
-                            kernel_size = 3
-                            iterations = 1      # Reduced from 2
-                        elif area_ratio < 0.15:  # Medium small (< 15%)
-                            kernel_size = 3
-                            iterations = 1
-                        else:  # Large objects need less erosion
-                            kernel_size = 3
-                            iterations = 1
-                        
-                        # Only apply if ratio is significant enough to warrant it (skip for tiny details)
-                        if area_ratio > 0.005:
-                            erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-                            best_mask = cv2.erode(best_mask.astype(np.uint8), erode_kernel, iterations=iterations).astype(bool)
-                            print(f"Applied erosion: kernel={kernel_size}x{kernel_size}, iterations={iterations}")
-                        else:
-                            print(f"Skipped erosion for tiny object (ratio={area_ratio:.4f})")
+                    # We use the exact SAM mask for protected objects to guarantee pixel-perfect protection.
+                    # No artificial erosion or dilation is applied.
                     
                     # If no mask looks like a door (score < 3), use default behavior
                     if best_door_score < 3:
@@ -350,7 +324,13 @@ class SegmentationEngine:
                             seed_hsv = cv2.cvtColor(np.uint8([[seed_color]]), cv2.COLOR_RGB2HSV)[0,0].astype(np.int16)
                             hue_diff = np.abs(img_hsv[:,:,0] - seed_hsv[0])
                             hue_diff = np.minimum(hue_diff, 180 - hue_diff)
-                            color_diff = (0.7 * rgb_diff) + (0.3 * (hue_diff * 2))
+                            
+                            seed_s = seed_hsv[1]
+                            seed_v = seed_hsv[2]
+                            if seed_v < 60 or seed_s < 40:
+                                color_diff = rgb_diff
+                            else:
+                                color_diff = (0.7 * rgb_diff) + (0.3 * (hue_diff * 2))
                             
                             tol = SegmentationConfig.COLOR_DIFF_WALL_MODE if is_wall_only else SegmentationConfig.COLOR_DIFF_SMALL_OBJECT
                             if is_vibrant: tol += 15
@@ -370,7 +350,14 @@ class SegmentationEngine:
                             img_hsv = cv2.cvtColor(self.image_rgb, cv2.COLOR_RGB2HSV).astype(np.int16)
                             seed_hsv = cv2.cvtColor(np.uint8([[seed_color]]), cv2.COLOR_RGB2HSV)[0,0].astype(np.int16)
                             hue_diff = np.abs(img_hsv[:,:,0] - seed_hsv[0])
-                            color_diff = (0.4 * rgb_diff) + (0.6 * (hue_diff * 2))
+                            hue_diff = np.minimum(hue_diff, 180 - hue_diff)
+                            
+                            seed_s = seed_hsv[1]
+                            seed_v = seed_hsv[2]
+                            if seed_v < 60 or seed_s < 40:
+                                color_diff = rgb_diff
+                            else:
+                                color_diff = (0.4 * rgb_diff) + (0.6 * (hue_diff * 2))
 
                             Y, X = np.ogrid[:h, :w]
                             dist_from_click = np.sqrt((X - ref_x)**2 + (Y - ref_y)**2)
@@ -397,13 +384,21 @@ class SegmentationEngine:
                             
                             # 🏛️ REFINEMENT STRATEGY PICKER
                             if not is_wall_click and not is_wall_only:
-                                # Standard Precise Mode: Stay within SAM boundaries
-                                mask_refined = (mask_uint8 & valid_gate & edge_barrier)
+                                # Standard Precise Mode: Use SAM's semantic boundary + Edge barriers
+                                # Relax valid_gate to only prevent extreme color leaks (like green grass from white wall)
+                                relaxed_gate = (color_diff < (tol * 1.5)).astype(np.uint8)
+                                base_refined = (mask_uint8 & relaxed_gate & edge_barrier)
+                                
+                                # Edge Recovery: Reclaim pixels lost to edge_barrier, constrained by original SAM mask
+                                recovery_kernel = np.ones((5, 5), np.uint8)
+                                mask_refined = cv2.dilate(base_refined, recovery_kernel) & mask_uint8
                             else:
-                                # Wall Mode: Expand and Bridge
-                                # 🌊 CONNECTED FLOW: Start from click and fill only connected area
-                                flow_mask = (valid_gate & edge_barrier).astype(np.uint8)
-                                bridge_kernel_size = 21 if is_wall_click else 17
+                                # Wall Mode: AI Semantic Mask + Connected Flow
+                                # Use SAM's mask bounded by edges, IGNORING strict RGB to allow shadows/highlights
+                                relaxed_gate = (color_diff < (tol * 2.0)).astype(np.uint8)
+                                flow_mask = (mask_uint8 & relaxed_gate & edge_barrier).astype(np.uint8)
+                                # Bridge small edge discontinuities
+                                bridge_kernel_size = 9 if is_wall_click else 7
                                 bridge_kernel = np.ones((bridge_kernel_size, bridge_kernel_size), np.uint8)
                                 bridged_flow = cv2.morphologyEx(flow_mask, cv2.MORPH_CLOSE, bridge_kernel)
                                 
@@ -418,9 +413,15 @@ class SegmentationEngine:
                                     # Final smooth fill for textured walls
                                     sm_kernel_size = 9 if is_wall_click else 7
                                     sm_kernel = np.ones((sm_kernel_size, sm_kernel_size), np.uint8)
-                                    mask_refined = cv2.morphologyEx(mask_refined, cv2.MORPH_CLOSE, sm_kernel)
+                                    base_refined = cv2.morphologyEx(mask_refined, cv2.MORPH_CLOSE, sm_kernel)
+                                    
+                                    # Edge Recovery: Reclaim pixels lost to edge_barrier
+                                    recovery_kernel = np.ones((5, 5), np.uint8)
+                                    mask_refined = cv2.dilate(base_refined, recovery_kernel) & mask_uint8
                                 else:
-                                    mask_refined = flow_mask
+                                    # Edge Recovery for fallback
+                                    recovery_kernel = np.ones((5, 5), np.uint8)
+                                    mask_refined = cv2.dilate(flow_mask, recovery_kernel) & mask_uint8
                             
                     elif level == 1:
                         # Level 1 Sub-segment: Calculate color_diff here too

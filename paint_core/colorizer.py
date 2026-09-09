@@ -290,8 +290,12 @@ class ColorTransferEngine:
             else:
                 blur_val = ColorizerConfig.BLUR_KERNEL_SIZE
             
-            kernel = np.ones(ColorizerConfig.DILATION_KERNEL_SIZE, np.uint8)
-            mask_dilated = cv2.dilate(mask_f, kernel, iterations=ColorizerConfig.DILATION_ITERATIONS)
+            if ColorizerConfig.DILATION_ITERATIONS > 0:
+                kernel = np.ones(ColorizerConfig.DILATION_KERNEL_SIZE, np.uint8)
+                mask_dilated = cv2.dilate(mask_f, kernel, iterations=ColorizerConfig.DILATION_ITERATIONS)
+            else:
+                mask_dilated = mask_f
+                
             mask_soft = cv2.GaussianBlur(mask_dilated, blur_val, 0)
             
             # L-Channel Adjustment
