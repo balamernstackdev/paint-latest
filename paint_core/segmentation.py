@@ -137,154 +137,388 @@ class SegmentationEngine:
         if len(scores.shape) == 2:
             scores = scores[0]
 
-        h, w = masks[0].shape
-        image_area = h * w
-        
-        ref_x, ref_y = None, None
-        if point_coords is not None and len(point_coords) > 0:
-            pos_indices = np.where(sam_point_labels == 1)[0]
-            if len(pos_indices) > 0:
-                idx = pos_indices[-1]
-                ref_x, ref_y = int(sam_point_coords[idx][0]), int(sam_point_coords[idx][1])
-        elif box_coords is not None:
-            ref_x = int((box_coords[0] + box_coords[2]) / 2)
-            ref_y = int((box_coords[1] + box_coords[3]) / 2)
-            
-        best_candidate_idx = -1
-        best_candidate_score = -9999
-        best_mask = None
-        
-        # 1. CANDIDATE VALIDATION
-        for idx in range(3):
-            mask_candidate = masks[idx]
-            mask_uint8_cand = (mask_candidate * 255).astype(np.uint8)
-            mask_area = np.sum(mask_candidate)
-            area_ratio = mask_area / image_area
-            
-            # Ensure click containment
-            click_containment = 1.0
-            if ref_x is not None and ref_y is not None:
-                ix = max(0, min(ref_x, w - 1))
-                iy = max(0, min(ref_y, h - 1))
-                if mask_candidate[iy, ix] == 0:
-                    click_containment = 0.0
-            
-            # Edge conflict (how much of the mask boundary sits on strong edges)
-            kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-            mask_dilated = cv2.dilate(mask_uint8_cand, kernel_dilate)
-            mask_eroded = cv2.erode(mask_uint8_cand, kernel_dilate)
-            boundary = mask_dilated - mask_eroded
-            
-            # Average edge energy on boundary
-            boundary_pixels = np.sum(boundary > 0)
-            edge_conflict = 0.0
-            if boundary_pixels > 0:
-                edge_sum = np.sum(self.image_edges_map[boundary > 0])
-                edge_conflict = edge_sum / (boundary_pixels * 255.0)
+        # Select best mask
+        if level is not None and 0 <= level < 3:
+            # User forced a specific level
+            if level == 1:
+                # For Small Objects, we usually want Index 0 (most granular)
+                # But if Index 0 is tiny (e.g. noise), fallback to Index 1 (Sub-segment)
+                area0 = np.sum(masks[0])
+                area1 = np.sum(masks[1])
+                if area0 < SegmentationConfig.MIN_MASK_AREA_PIXELS * 10 and area1 > area0 * 2: # Heuristic for "too small"
+                    best_mask = masks[1]
+                else:
+                    best_mask = masks[0]
+            elif level == 0:
+                # --- INTELLIGENT STANDARD WALLS MODE ---
+                if box_coords is not None:
+                    # Box Mode: Always want the largest/whole object (Index 2)
+                    best_mask = masks[2] if scores[2] > SegmentationConfig.SAM_MIN_SCORE else masks[1]
+                else:
+                    # Point Click Mode: Analyze ALL 3 masks and pick best one for doors/windows
+                    h, w = masks[0].shape
+                    image_area = h * w
+                    
+                    # Analyze all 3 masks
+                    best_mask = masks[0]  # Default
+                    best_door_score = -1
+                    
+                    for idx in range(3):
+                        mask_area = np.sum(masks[idx])
+                        if mask_area == 0: continue
+                        
+                        mask_coords = np.argwhere(masks[idx] > 0)
+                        y_coords, x_coords = mask_coords[:, 0], mask_coords[:, 1]
+                        mask_height = np.max(y_coords) - np.min(y_coords) + 1
+                        mask_width = np.max(x_coords) - np.min(x_coords) + 1
+                        
+                        # Calculate characteristics
+                        area_ratio = mask_area / image_area
+                        aspect_ratio = mask_height / max(mask_width, 1)
+                        
+                        # Updated: Only count as door if area is genuinely small
+                        door_score = 0
+                        if area_ratio < 0.20:
+                            if aspect_ratio > 1.3: door_score += 2
+                            if area_ratio < 0.08: door_score += 3
+                            if aspect_ratio > 1.8: door_score += 3
+
+                        print(f"Mask {idx}: area={area_ratio*100:.1f}%, aspect={aspect_ratio:.2f}, score={scores[idx]:.2f}, door_score={door_score}")
+                        
+                        
+                        # Priority 1: Large Area (ONLY for Wall Click Mode)
+                        # We only auto-grab large masks if the user is explicitly using the Wall tool
+                        if is_wall_click and area_ratio > 0.25:
+                             current_best_area = np.sum(best_mask) / image_area
+                             if area_ratio > current_best_area:
+                                 best_mask = masks[idx]
+                                 best_door_score = 0 
+                                 continue
+                        
+                        # Priority 2: Best Door Match (for both modes, helps avoid bleeding)
+                        if door_score > best_door_score and (best_door_score != 0 or door_score > 4):
+                            best_door_score = door_score
+                            best_mask = masks[idx]
+                    
+                    print(f"Selected mask with door_score={best_door_score}")
+                    
+                    # We use the exact SAM mask for protected objects to guarantee pixel-perfect protection.
+                    # No artificial erosion or dilation is applied.
+                    
+                    # If no mask looks like a door (score < 3), use default behavior
+                    if best_door_score < 3:
+                        # Re-calculate area of the masks to be sure we pick the right one
+                        area0 = np.sum(masks[0])
+                        area1 = np.sum(masks[1])
+                        area2 = np.sum(masks[2])
+                        
+                        if is_wall_click:
+                            # In Wall mode, if no door, always take the biggest mask
+                            best_idx = np.argmax([area0, area1, area2])
+                            best_mask = masks[best_idx]
+                        else:
+                            # Standard mode: Stay granular
+                            if area0 < SegmentationConfig.MIN_MASK_AREA_PIXELS:
+                                best_idx = np.argmax(scores)
+                                best_mask = masks[best_idx]
+                            else:
+                                best_mask = masks[0]
+            else:
+                best_mask = masks[level]
+        else:
+            # Heuristic: Favor 'Fine Detail' (Index 0) for Point Clicks
+            # Previously we favored Index 1, which caused "wrong object" selection for thin walls.
+            if box_coords is not None:
+                best_mask = masks[2] if scores[2] > SegmentationConfig.SAM_MIN_SCORE else masks[1]
+            else:
+                # Point Mode: We want the EXACT part user clicked.
+                # Index 0 is usually the most granular (e.g., just the side strip).
+                # Index 1 often merges neighbors (e.g., side strip + main wall).
                 
-            # Score formula
-            final_score = (scores[idx] * 40.0) - (edge_conflict * 100.0)
-            
-            reason = ""
-            if click_containment == 0.0:
-                reason = "REJECTED: Does not contain click"
-                final_score = -9999
-            elif area_ratio < 0.005:
-                reason = "REJECTED: Too small (<0.5%)"
-                final_score = -9999
-            elif area_ratio > 0.30 and not box_coords:
-                reason = "REJECTED: Oversized (>30%)"
-                final_score = -9999
-            
-            print(f"Candidate {idx}:\narea={area_ratio*100:.1f}%\nSAM={scores[idx]:.2f}\nclick={click_containment:.2f}\nedgeConflict={edge_conflict:.2f}\nscore={final_score:.2f}")
-            if reason:
-                print(reason)
-                
-            if final_score > best_candidate_score:
-                best_candidate_score = final_score
-                best_candidate_idx = idx
-                best_mask = mask_candidate
-                
-        if best_mask is None:
-            # Fallback if all rejected
-            best_candidate_idx = np.argmax(scores)
-            best_mask = masks[best_candidate_idx]
-            print(f"All candidates rejected. Falling back to Candidate {best_candidate_idx}")
-            
-        print(f"\nSelected candidate {best_candidate_idx}")
+                # Only skip Index 0 if it's basically noise
+                area0 = np.sum(masks[0])
+                if area0 < SegmentationConfig.MIN_MASK_AREA_PIXELS: 
+                     best_idx = np.argmax(scores)
+                     best_mask = masks[best_idx]
+                else:
+                     best_mask = masks[0]
         
         if cleanup:
-            mask_uint8 = (best_mask * 255).astype(np.uint8)
-            orig_area_ratio = np.sum(best_mask) / image_area
-            print(f"Original mask area: {orig_area_ratio*100:.1f}%")
-            
-            # 2. CONNECTED COMPONENT FILTERING
-            if ref_x is not None and ref_y is not None:
-                ix = int(max(0, min(ref_x, w - 1)))
-                iy = int(max(0, min(ref_y, h - 1)))
-                
-                num_labels, labels_im, stats, centroids = cv2.connectedComponentsWithStats(mask_uint8, connectivity=8)
-                target_label = labels_im[iy, ix]
-                
-                if target_label != 0:
-                    best_mask = (labels_im == target_label)
-                else:
-                    # Fallback to largest
-                    max_area = 0
-                    max_label = 1
-                    for i in range(1, num_labels):
-                        if stats[i, cv2.CC_STAT_AREA] > max_area:
-                            max_area = stats[i, cv2.CC_STAT_AREA]
-                            max_label = i
-                    best_mask = (labels_im == max_label)
-                    
-            cc_area_ratio = np.sum(best_mask) / image_area
-            print(f"Connected component: {cc_area_ratio*100:.1f}%")
-            
+            h, w = best_mask.shape
             mask_uint8 = (best_mask * 255).astype(np.uint8)
             
-            # 3. SELECTIVE HOLE FILLING
-            # Fill small holes inside the mask (e.g. shadows under overhangs or small obstacles)
-            cnts, hierarchy = cv2.findContours(mask_uint8, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-            out_mask = np.copy(mask_uint8)
-            if hierarchy is not None:
-                hierarchy = hierarchy[0]
-                for i, c in enumerate(cnts):
-                    parent_idx = hierarchy[i][3]
-                    if parent_idx != -1:  # It's an internal hole
-                        area = cv2.contourArea(c)
-                        # Fill if hole is smaller than 0.5% of the image (prevent swallowing large windows)
-                        if area < (h * w * 0.005):
-                            cv2.drawContours(out_mask, [c], -1, 255, thickness=-1)
-            mask_uint8 = out_mask
+            # Use a reference point for connectivity filtering
+            ref_x, ref_y = None, None
+            if point_coords is not None and len(point_coords) > 0:
+                pos_indices = np.where(sam_point_labels == 1)[0]
+                if len(pos_indices) > 0:
+                    idx = pos_indices[-1]
+                    ref_x, ref_y = int(sam_point_coords[idx][0]), int(sam_point_coords[idx][1])
+            elif box_coords is not None:
+                ref_x = int((box_coords[0] + box_coords[2]) / 2)
+                ref_y = int((box_coords[1] + box_coords[3]) / 2)
 
-            # 4. ARCHITECTURAL BOUNDARY REFINEMENT & MORPHOLOGY
-            # Instead of a destructive bitwise AND that creates black lines, we use the edge barrier 
-            # merely to stop morphological dilation/closing from expanding over edges.
-            _, edge_barrier = cv2.threshold(self.image_edges_map, SegmentationConfig.EDGE_THRESHOLD_WALL_MODE if is_wall_only else 35, 255, cv2.THRESH_BINARY_INV)
-            
-            # Dilate to snap to edges, but don't cross the barrier
-            kernel_snap = np.ones((5, 5), np.uint8)
-            mask_dilated = cv2.dilate(mask_uint8, kernel_snap)
-            mask_refined = (mask_dilated & edge_barrier) | mask_uint8
-            
-            # Conservative erosion to pull back slightly from edges
-            erosion_kernel = np.ones((3, 3), np.uint8)
-            mask_refined = cv2.erode(mask_refined, erosion_kernel, iterations=1)
-            
-            # Minor noise cleanup
-            open_close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-            mask_refined = cv2.morphologyEx(mask_refined, cv2.MORPH_OPEN, open_close_kernel)
-            mask_refined = cv2.morphologyEx(mask_refined, cv2.MORPH_CLOSE, open_close_kernel)
-            
-            # Ensure click point is preserved
-            if ref_x is not None and ref_y is not None:
-                cv2.circle(mask_refined, (ref_x, ref_y), 2, 255, -1)
+            if ref_x is not None:
+                is_small_object = False  # Initialize safely for Box mode
+                # --- ADAPTIVE FILTERING ---
+                # Calculate reference color (from click point or box center)
+                y1, y2 = max(0, ref_y-1), min(h, ref_y+2)
+                x1, x2 = max(0, ref_x-1), min(w, ref_x+2)
+                seed_patch = self.image_rgb[y1:y2, x1:x2]
                 
-            best_mask = (mask_refined > 0)
-            final_area_ratio = np.sum(best_mask) / image_area
-            print(f"Refined mask area: {final_area_ratio*100:.1f}%\n")
+                # Use MEDIAN instead of MEAN for seed color.
+                seed_color = np.median(seed_patch, axis=(0, 1))
+                
+                img_u16 = self.image_u16
+                
+                if box_coords is not None:
+                     # BOX MODE: Enhanced Logic (Mask-Based Seed + Color Diff)
+                     mask_indices = np.where(mask_uint8 > 0)
+                     if len(mask_indices[0]) > 0:
+                         seed_patch = self.image_rgb[mask_indices]
+                         seed_color = np.median(seed_patch, axis=0) 
+                     
+                     # --- VIBRANT COLOR AWARENESS (Box Mode) ---
+                     # For box mode, we still use a broad check but stricter for different hues
+                     diff_r = np.abs(img_u16[:,:,0] - seed_color[0])
+                     diff_g = np.abs(img_u16[:,:,1] - seed_color[1])
+                     diff_b = np.abs(img_u16[:,:,2] - seed_color[2])
+                     color_diff = np.maximum(np.maximum(diff_r, diff_g), diff_b)
+                     
+                     valid_mask = (color_diff < SegmentationConfig.COLOR_DIFF_BOX_MODE).astype(np.uint8)
+                     
+                     # Enable Edge Detection to snap to lines
+                     _, edge_barrier = cv2.threshold(self.image_edges_map, SegmentationConfig.EDGE_THRESHOLD_BOX_MODE, 255, cv2.THRESH_BINARY_INV)
+                     edge_barrier = (edge_barrier / 255).astype(np.uint8)
+                     
+                     mask_refined = (mask_uint8 & valid_mask & edge_barrier)
+                     
+                     # If validation killed the mask (e.g. wrong seed), fallback to original SAM mask
+                     if np.sum(mask_refined) < (np.sum(mask_uint8) * 0.1):
+                         mask_refined = mask_uint8 
+                else:
+                    # Point Click Mode Logic
+                    # Check if the SAM mask implies a very small/thin object
+                    h, w = mask_uint8.shape
+                    mask_area_px = np.sum(mask_uint8)
+                    
+                    # Increased threshold from 1% to 3% to capture vertical wall strips/pillars
+                    # These "medium" objects also need the edge-barrier disabled to paint fully.
+                    is_small_object = mask_area_px < (h * w * SegmentationConfig.SMALL_OBJECT_THRESHOLD)
+                    
+                    std_dev = np.std(seed_color)
+                    
+                    if level == 0:
+                        if is_small_object:
+                            # --- VIBRANT WALL REFINEMENT (Small/Detached Objects) ---
+                            s_max, s_min = np.max(seed_color), np.min(seed_color)
+                            saturation = (s_max - s_min) / (s_max + 1)
+                            is_vibrant = saturation > 0.3
+                            
+                            # 🌈 HUE-TOLERANT COLOR MATCHING
+                            diff_r = np.abs(img_u16[:,:,0] - seed_color[0].astype(np.int16))
+                            diff_g = np.abs(img_u16[:,:,1] - seed_color[1].astype(np.int16))
+                            diff_b = np.abs(img_u16[:,:,2] - seed_color[2].astype(np.int16))
+                            rgb_diff = np.maximum(np.maximum(diff_r, diff_g), diff_b)
+                            img_hsv = cv2.cvtColor(self.image_rgb, cv2.COLOR_RGB2HSV).astype(np.int16)
+                            seed_hsv = cv2.cvtColor(np.uint8([[seed_color]]), cv2.COLOR_RGB2HSV)[0,0].astype(np.int16)
+                            hue_diff = np.abs(img_hsv[:,:,0] - seed_hsv[0])
+                            hue_diff = np.minimum(hue_diff, 180 - hue_diff)
+                            
+                            seed_s = seed_hsv[1]
+                            seed_v = seed_hsv[2]
+                            if seed_v < 60 or seed_s < 40:
+                                color_diff = rgb_diff
+                            else:
+                                color_diff = (0.7 * rgb_diff) + (0.3 * (hue_diff * 2))
+                            
+                            tol = SegmentationConfig.COLOR_DIFF_WALL_MODE if is_wall_only else SegmentationConfig.COLOR_DIFF_SMALL_OBJECT
+                            if is_vibrant: tol += 15
+                            
+                            valid_mask = (color_diff < tol).astype(np.uint8) 
+                            edge_thresh = SegmentationConfig.EDGE_THRESHOLD_WALL_MODE if is_wall_only else SegmentationConfig.EDGE_THRESHOLD_SMALL_OBJECT
+                            _, edge_barrier = cv2.threshold(self.image_edges_map, edge_thresh, 255, cv2.THRESH_BINARY_INV)
+                            edge_barrier = (edge_barrier / 255).astype(np.uint8)
+                            mask_refined = (mask_uint8 & valid_mask & edge_barrier)
+                        else:
+                            # --- DISTANCE-DECAYING TOLERANCE ---
+                            # Logic for Large Walls (Standard or Wall Click)
+                            diff_r = np.abs(img_u16[:,:,0] - seed_color[0].astype(np.int16))
+                            diff_g = np.abs(img_u16[:,:,1] - seed_color[1].astype(np.int16))
+                            diff_b = np.abs(img_u16[:,:,2] - seed_color[2].astype(np.int16))
+                            rgb_diff = np.maximum(np.maximum(diff_r, diff_g), diff_b)
+                            img_hsv = cv2.cvtColor(self.image_rgb, cv2.COLOR_RGB2HSV).astype(np.int16)
+                            seed_hsv = cv2.cvtColor(np.uint8([[seed_color]]), cv2.COLOR_RGB2HSV)[0,0].astype(np.int16)
+                            hue_diff = np.abs(img_hsv[:,:,0] - seed_hsv[0])
+                            hue_diff = np.minimum(hue_diff, 180 - hue_diff)
+                            
+                            seed_s = seed_hsv[1]
+                            seed_v = seed_hsv[2]
+                            if seed_v < 60 or seed_s < 40:
+                                color_diff = rgb_diff
+                            else:
+                                color_diff = (0.4 * rgb_diff) + (0.6 * (hue_diff * 2))
+
+                            Y, X = np.ogrid[:h, :w]
+                            dist_from_click = np.sqrt((X - ref_x)**2 + (Y - ref_y)**2)
+                            decay_factor = np.clip(1.0 - (dist_from_click / SegmentationConfig.DECAY_DISTANCE_MAX), SegmentationConfig.DECAY_FACTOR_MIN, 1.0)
+                            
+                            # Wall Click Mode uses even higher tolerance for sunlit exteriors
+                            base_tol = 120 if is_wall_click else (SegmentationConfig.COLOR_DIFF_WALL_MODE if is_wall_only else 95)
+                            s_max, s_min = np.max(seed_color), np.min(seed_color)
+                            if (s_max - s_min) / (s_max + 1) > 0.3: base_tol += 10
+
+                            tol = base_tol * decay_factor 
+                            valid_gate = (color_diff < tol).astype(np.uint8)
+                            
+                            # EDGE BARRIER: Wall Click ignores small brick edges (Threshold 35+)
+                            edge_thresh = 35 if is_wall_click else (SegmentationConfig.EDGE_THRESHOLD_WALL_MODE if is_wall_only else SegmentationConfig.EDGE_THRESHOLD_STANDARD_WALL)
+                            _, edge_barrier = cv2.threshold(self.image_edges_map, edge_thresh, 255, cv2.THRESH_BINARY_INV)
+                            
+                            # 🛡️ BALANCED BARRIER: Thinner for house textures if in Wall Mode
+                            if is_wall_click or is_wall_only:
+                                kernel = np.ones((3,3), np.uint8)
+                                edge_barrier = cv2.erode((edge_barrier/255).astype(np.uint8), kernel, iterations=1)
+                            else:
+                                edge_barrier = (edge_barrier / 255).astype(np.uint8)
+                            
+                            # 🏛️ REFINEMENT STRATEGY PICKER
+                            if not is_wall_click and not is_wall_only:
+                                # Standard Precise Mode: Use SAM's semantic boundary + Edge barriers
+                                # Relax valid_gate to only prevent extreme color leaks (like green grass from white wall)
+                                relaxed_gate = (color_diff < (tol * 1.5)).astype(np.uint8)
+                                base_refined = (mask_uint8 & relaxed_gate & edge_barrier)
+                                
+                                # Edge Recovery: Reclaim pixels lost to edge_barrier, constrained by original SAM mask
+                                recovery_kernel = np.ones((5, 5), np.uint8)
+                                mask_refined = cv2.dilate(base_refined, recovery_kernel) & mask_uint8
+                            else:
+                                # Wall Mode: AI Semantic Mask + Connected Flow
+                                # Use SAM's mask bounded by edges, IGNORING strict RGB to allow shadows/highlights
+                                relaxed_gate = (color_diff < (tol * 2.0)).astype(np.uint8)
+                                flow_mask = (mask_uint8 & relaxed_gate & edge_barrier).astype(np.uint8)
+                                # Bridge small edge discontinuities
+                                bridge_kernel_size = 9 if is_wall_click else 7
+                                bridge_kernel = np.ones((bridge_kernel_size, bridge_kernel_size), np.uint8)
+                                bridged_flow = cv2.morphologyEx(flow_mask, cv2.MORPH_CLOSE, bridge_kernel)
+                                
+                                if ref_x is not None and ref_y is not None:
+                                    h_f, w_f = bridged_flow.shape
+                                    flood_mask = np.zeros((h_f + 2, w_f + 2), np.uint8)
+                                    fill_val = 1
+                                    cv2.floodFill(bridged_flow, flood_mask, (ref_x, ref_y), fill_val)
+                                    connected_path = (bridged_flow == fill_val).astype(np.uint8)
+                                    mask_refined = connected_path
+                                    
+                                    # Final smooth fill for textured walls
+                                    sm_kernel_size = 9 if is_wall_click else 7
+                                    sm_kernel = np.ones((sm_kernel_size, sm_kernel_size), np.uint8)
+                                    base_refined = cv2.morphologyEx(mask_refined, cv2.MORPH_CLOSE, sm_kernel)
+                                    
+                                    # Edge Recovery: Reclaim pixels lost to edge_barrier
+                                    recovery_kernel = np.ones((5, 5), np.uint8)
+                                    mask_refined = cv2.dilate(base_refined, recovery_kernel) & mask_uint8
+                                else:
+                                    # Edge Recovery for fallback
+                                    recovery_kernel = np.ones((5, 5), np.uint8)
+                                    mask_refined = cv2.dilate(flow_mask, recovery_kernel) & mask_uint8
+                            
+                    elif level == 1:
+                        # Level 1 Sub-segment: Calculate color_diff here too
+                        diff_r = np.abs(img_u16[:,:,0] - seed_color[0])
+                        diff_g = np.abs(img_u16[:,:,1] - seed_color[1])
+                        diff_b = np.abs(img_u16[:,:,2] - seed_color[2])
+                        color_diff = np.maximum(np.maximum(diff_r, diff_g), diff_b)
+                        valid_mask = (color_diff < SegmentationConfig.INTENSITY_DIFF_LEVEL_1).astype(np.uint8) 
+                        mask_refined = (mask_uint8 & valid_mask)
+                    else:
+                        diff_r = np.abs(img_u16[:,:,0] - seed_color[0])
+                        diff_g = np.abs(img_u16[:,:,1] - seed_color[1])
+                        diff_b = np.abs(img_u16[:,:,2] - seed_color[2])
+                        color_diff = np.maximum(np.maximum(diff_r, diff_g), diff_b)
+                        valid_mask = (color_diff < SegmentationConfig.INTENSITY_DIFF_LEVEL_2).astype(np.uint8)
+                        mask_refined = (mask_uint8 & valid_mask)
+
+                    # Ensure click point is always preserved
+                    if ref_x is not None and ref_y is not None:
+                         cv2.circle(mask_refined, (ref_x, ref_y), SegmentationConfig.CLICK_PRESERVE_RADIUS, 1, -1) 
+
+                # --- SELECTIVE HOLE FILLING ---
+                if level == 0 or box_coords is not None:
+                    # Skip erosion/closing for Small Objects to prevent deleting thin lines
+                    # CRITICAL: Also skip for level 0 to preserve eroded safety margins for doors/windows
+                    if not (level == 0 and is_small_object):
+                        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, SegmentationConfig.MORPH_KERNEL_SIZE)
+                        mask_refined = cv2.morphologyEx(mask_refined, cv2.MORPH_CLOSE, kernel)
+                    
+                    # Selective internal hole filling using HIERARCHY
+                    # RETR_CCOMP returns hierarchy [Next, Previous, First_Child, Parent]
+                    # If a contour has a parent (hierarchy[i][3] != -1), it's an internal hole.
+                    cnts, hierarchy = cv2.findContours(mask_refined, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+                    out_mask = np.copy(mask_refined)
+
+                    if hierarchy is not None:
+                        hierarchy = hierarchy[0] # flatten
+                        for i, c in enumerate(cnts):
+                            parent_idx = hierarchy[i][3]
+                            if parent_idx != -1: # It is a hole (has a parent)
+                                area = cv2.contourArea(c)
+                                if area < (h * w * 0.005): # Increased to 0.5% (was 0.05%) to catch brick textures
+                                    # 🖼️ ULTRA PROTECT: Does the hole contain ANY details?
+                                    hole_roi = np.zeros_like(mask_refined)
+                                    cv2.drawContours(hole_roi, [c], -1, 1, thickness=-1)
+                                    avg_edge = cv2.mean(self.image_edges_map, mask=hole_roi)[0]
+                                    
+                                    # We increased this from 3 to 8. Most shadows behind plants have moderate edge 
+                                    # energy, but artwork has VERY high edge energy.
+                                    if avg_edge < 8.0: 
+                                        cv2.drawContours(out_mask, [c], -1, 1, thickness=-1)
+                    mask_refined = out_mask
+                elif level == 1:
+                    # Level 1 (Small Objects): No hole filling or closing to preserve lattice/mesh details
+                    pass
+
+                if np.sum(mask_refined) > SegmentationConfig.MIN_MASK_AREA_PIXELS:
+                    mask_uint8 = mask_refined
             
+            # Connectivity filtering and Object Recovery
+            if ref_x is not None:
+                num_labels, labels_im, stats, centroids = cv2.connectedComponentsWithStats(mask_uint8, connectivity=SegmentationConfig.CONNECTED_COMPONENTS_CONNECTIVITY)
+                if num_labels > 1:
+                    if box_coords is not None:
+                        # --- BOX MODE: MULTI-COMPONENT RECOVERY ---
+                        # In Photoshop style, if you box an object with holes (like a perforated wall),
+                        # we want to keep ALL pieces of that object that are inside the box.
+                        recovered_mask = np.zeros_like(best_mask)
+                        bx1, by1, bx2, by2 = box_coords
+                        
+                        for i in range(1, num_labels):
+                            cx, cy = centroids[i]
+                            # If centroid is inside box, or it's the largest component
+                            if (bx1 < cx < bx2 and by1 < cy < by2) or stats[i, cv2.CC_STAT_AREA] > (h*w*0.05):
+                                recovered_mask |= (labels_im == i)
+                        
+                        if np.any(recovered_mask):
+                            best_mask = recovered_mask
+                    else:
+                        # Point Click Mode: Keep only the target component
+                        # Ensure coordinates are integers for array indexing
+                        ix = int(max(0, min(ref_x, w - 1)))
+                        iy = int(max(0, min(ref_y, h - 1)))
+                        
+                        target_label = labels_im[iy, ix]
+                        if target_label != 0:
+                            # Use intelligent filter to remove small/far disconnected objects (pots, artifacts)
+                            best_mask = self._filter_small_components(mask_uint8, ref_x, ref_y, target_label, labels_im, stats, centroids)
+                        else:
+                            max_area = 0
+                            max_label = 1
+                            for i in range(1, num_labels):
+                                if stats[i, cv2.CC_STAT_AREA] > max_area:
+                                    max_area = stats[i, cv2.CC_STAT_AREA]
+                                    max_label = i
+                            best_mask = (labels_im == max_label)
+        
         return best_mask
 
     def _filter_small_components(self, mask, click_x, click_y, target_label, labels_im, stats, centroids):
