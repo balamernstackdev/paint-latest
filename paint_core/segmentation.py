@@ -278,7 +278,7 @@ class SegmentationEngine:
                          seed_patch = self.image_rgb[mask_indices]
                          seed_color = np.median(seed_patch, axis=0) 
                      
-                     # --- VIBRANT COLOR AWARENESS (Box Mode) ---
+                     # --- VIBRANT COLOR AWARENdESS (Box Mode) ---
                      # For box mode, we still use a broad check but stricter for different hues
                      diff_r = np.abs(img_u16[:,:,0] - seed_color[0])
                      diff_g = np.abs(img_u16[:,:,1] - seed_color[1])
