@@ -8,7 +8,7 @@ import torch
 import warnings
 import logging
 
-# --- SILENCE DEPRECATION WARNINGS ---
+# --- SILENCE DEPRECsssATION WARNINGS ---
 warnings.filterwarnings("ignore", category=FutureWarning, module="timm")
 warnings.filterwarnings("ignore", category=UserWarning, module="mobile_sam")
 
