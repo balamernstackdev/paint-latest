@@ -4,6 +4,7 @@
 
 # Core Framework
 streamlit==1.58.0
+starlette<1.4.0
 
 # Image Processing
 opencv-python-headless>=4.8.0
