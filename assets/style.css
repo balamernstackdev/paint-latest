@@ -1,0 +1,451 @@
+/* style.css - General App Styles */
+
+/* Force Light Theme */
+:root {
+    --primary-color: #ff4b4b;
+    --background-color: #ffffff;
+    --secondary-background-color: #f0f2f6;
+    --text-color: #31333F;
+    --font: "Segoe UI", sans-serif;
+}
+
+/* Main App Background */
+.stApp {
+    background-color: #ffffff;
+}
+
+/* Sidebar Background & Text */
+/* Sidebar - Professional Light */
+[data-testid="stSidebar"] {
+    background-color: #f8f9fa !important;
+    border-right: 1px solid #e6e6e6;
+    width: 350px !important;
+}
+
+@media (min-width: 769px) {
+    .m-open-container {
+        display: none !important;
+    }
+}
+
+/* REVERTED: Click-outside-to-close restored */
+
+.stMarkdown h3 {
+    font-size: 1.1rem !important;
+    font-weight: 700 !important;
+    color: #1f2937 !important;
+    margin-bottom: 0.5rem !important;
+}
+
+@media (max-width: 640px) {
+    .stMarkdown h3 {
+        font-size: 1rem !important;
+    }
+}
+
+.stMarkdown h2 {
+    font-size: 1.3rem !important;
+    font-weight: 800 !important;
+    color: #111827 !important;
+}
+
+/* Enhanced Card Look */
+div[data-testid="stVerticalBlockBordered"] {
+    border: 1px solid #e5e7eb !important;
+    border-radius: 10px !important;
+    background-color: #ffffff !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Sidebar collapse adjustment for the main content area */
+[data-testid="stSidebarNav"] {
+    width: 350px !important;
+}
+
+/* Sidebar Text Color */
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] div,
+[data-testid="stSidebar"] label {
+    color: #31333F !important;
+}
+
+/* Sidebar Inputs - Standardize */
+[data-testid="stSidebar"] .stSelectbox>div>div {
+    background-color: #ffffff;
+    color: #31333F;
+    border-color: #dcdcdc;
+}
+
+/* SIDEBAR LAYOUT (Compressed Top) */
+[data-testid="stSidebarContent"] {
+    padding-top: 0.5rem !important;
+}
+
+@media (max-width: 640px) {
+    [data-testid="stSidebarContent"] {
+        padding-top: 0.25rem !important;
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
+    }
+}
+
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+    gap: 1.25rem !important;
+    margin-top: 0rem !important;
+}
+
+@media (max-width: 640px) {
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: 0.75rem !important;
+    }
+}
+
+/* Ensure the first element (header) has no extra internal margin */
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"]>div:first-child {
+    margin-top: 0rem !important;
+    padding-top: 0rem !important;
+}
+
+/* Ensure no bottom margin for markdown blocks */
+[data-testid="stSidebar"] .stMarkdown {
+    margin-bottom: 0px !important;
+}
+
+[data-testid="stSidebar"] .stMarkdown div[data-testid="stMarkdownContainer"] p {
+    margin-bottom: 0px !important;
+}
+
+/* Tighten Radio buttons */
+[data-testid="stSidebar"] .stRadio>div {
+    gap: 2px !important;
+    margin-top: 0px !important;
+}
+
+/* Minimize Dividers */
+[data-testid="stSidebar"] hr {
+    margin-top: 0.25rem !important;
+    margin-bottom: 0.25rem !important;
+}
+
+/* Compact File Uploader - Sane padding */
+[data-testid="stSidebar"] [data-testid="stFileUploader"] {
+    padding: 5px !important;
+    margin-top: 5px !important;
+}
+
+/* Adjust Active Paint Card internal spacing */
+[data-testid="stSidebar"] div[data-testid="stVerticalBlockBordered"] {
+    padding: 0.75rem !important;
+}
+
+/* Sidebar container vertical gap fix */
+[data-testid="stSidebar"] .stVerticalBlock {
+    gap: 1rem !important;
+}
+
+/* Reset Global Text to Dark for Main Area Only */
+.main .block-container h1,
+.main .block-container h2,
+.main .block-container h3,
+.main .block-container p,
+.main .block-container span,
+.main .block-container div {
+    color: #333333 !important;
+}
+
+/* Buttons */
+.stButton>button {
+    background-color: #ffffff;
+    color: #333333;
+    /* Default button text dark */
+    border: 1px solid #dcdcdc;
+    border-radius: 8px;
+    transition: all 0.2s;
+}
+
+/* Sidebar Buttons Specifics */
+[data-testid="stSidebar"] .stButton>button {
+    background-color: #ffffff;
+    color: #333333;
+    border: 1px solid #dcdcdc;
+}
+
+[data-testid="stSidebar"] .stButton>button:hover {
+    background-color: #f0f0f0;
+    border-color: #bbbbbb;
+}
+
+/* File Uploader */
+[data-testid="stFileUploader"] {
+    padding: 10px !important;
+    border: 2px dashed #cccccc;
+    border-radius: 10px;
+    background-color: #ffffff;
+    text-align: center;
+}
+
+/* Compact individual file items */
+[data-testid="stFileUploader"] section[data-testid="stFileUploaderDropzone"]>div>div {
+    padding: 0px !important;
+    margin: 0px !important;
+    gap: 5px !important;
+}
+
+/* Specific targeting for the file list item to reduce internal padding */
+[data-testid="stFileUploader"] div[role="listitem"] {
+    padding: 4px 8px !important;
+    margin-bottom: 4px !important;
+}
+
+/* Reduce gap between icon and filename */
+[data-testid="stFileUploader"] div[data-testid="stFileUploaderFileName"] {
+    margin-left: 2px !important;
+}
+
+/* Center align main landing text */
+.landing-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    width: 100%;
+    margin-top: 5vh;
+}
+
+.landing-header h1 {
+    color: #333333 !important;
+    font-size: 2.5rem !important;
+    margin-bottom: 10px !important;
+}
+
+.landing-sub p {
+    color: #666666 !important;
+    font-size: 1.2rem !important;
+    margin-bottom: 30px !important;
+}
+
+/* Force main container to use full width and ABSOLUTELY NO TOP SPACE */
+.main .block-container {
+    max-width: 98% !important;
+    padding-top: 0px !important;
+    padding-right: 1rem !important;
+    padding-left: 1rem !important;
+    padding-bottom: 3rem !important;
+    margin-top: 0px !important;
+}
+
+@media (max-width: 1024px) {
+
+    /* Aggressively allow mobile overflow and prevent right-side cut off */
+    .main .block-container {
+        overflow-x: auto !important;
+        display: block !important;
+        max-width: 100% !important;
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
+        /* FIX: Reduced top padding so homepage content is visible */
+        padding-top: 2rem !important;
+    }
+
+    .stApp,
+    [data-testid="stAppViewContainer"] {
+        overflow-x: auto !important;
+    }
+
+    /* Align to left on mobile to prevent centering-induced overflow */
+    [data-testid="stVerticalBlock"] {
+        align-items: flex-start !important;
+        justify-content: flex-start !important;
+    }
+}
+
+/* Sidebar content should stay left-aligned */
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+    align-items: flex-start !important;
+}
+
+/* CENTER MAIN AREA CONTENT (Desktop only) */
+@media (min-width: 769px) {
+    .main [data-testid="stVerticalBlock"] {
+        align-items: center !important;
+    }
+
+    .main [data-testid="stVerticalBlock"]>div {
+        display: flex !important;
+        justify-content: center !important;
+        width: 100% !important;
+    }
+
+    .main .block-container {
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+}
+
+/* HIDE LIVE UI NOISE (Share, GitHub, Star, Menu) */
+[data-testid="stDecoration"],
+[data-testid="stToolbarActions"],
+[data-testid="stMainMenu"] {
+    display: none !important;
+}
+
+/* Sidebar Toggle (>>) - Styling only, no force visibility here */
+[data-testid="stSidebarCollapseButton"] {
+    display: flex !important;
+    color: #31333F !important;
+}
+
+header {
+    background-color: transparent !important;
+}
+
+[data-testid="stSidebarCollapseButton"] svg {
+    fill: #31333F !important;
+    color: #31333F !important;
+    width: 20px !important;
+    height: 20px !important;
+}
+
+/* REVERTED: Sidebar top padding restored */
+
+/* Hide Streamlit elements */
+#MainMenu {
+    visibility: hidden;
+}
+
+footer {
+    visibility: hidden;
+}
+
+/* SIMPLIFIED RESPONSIVE CANVAS - DISTORTION GUARD */
+iframe[title="streamlit_drawable_canvas.st_canvas"],
+.element-container iframe {
+    /* Width/Height must be controlled by JS or attributes to prevent coordinate distortion */
+    border: none !important;
+    border-radius: 8px;
+}
+
+.editor-container {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    overflow: hidden;
+}
+
+/* Ghost Sync Hiding: Target the container immediately after the ghost marker */
+.sync-ghost-marker,
+.global-sync-marker,
+#global-sync-anchor {
+    display: none !important;
+}
+
+/* Hide the Streamlit element container that contains our anchor */
+div.element-container:has(#global-sync-anchor),
+div.element-container:has(.global-sync-marker),
+div.element-container:has(.sync-ghost-marker) {
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    position: fixed !important;
+    top: -10000px !important;
+}
+
+/* Hide any Streamlit element container that follows our markers */
+.element-container:has(.sync-ghost-marker)+.element-container,
+.element-container:has(.global-sync-marker)+.element-container,
+div.element-container:has(#global-sync-anchor)+div.element-container,
+div.element-container:has(button[key="global_sync_btn"]) {
+    display: none !important;
+    position: fixed !important;
+    top: -10000px !important;
+    left: -10000px !important;
+    width: 0 !important;
+    height: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+/* Redundant safety for the button itself if it escapes its container */
+div[data-testid="stButton"]:has(button p:contains("GLOBAL SYNC")),
+div[data-testid="stButton"]:has(button:contains("GLOBAL SYNC")),
+button[key="global_sync_btn"] {
+    display: none !important;
+    position: fixed !important;
+    top: -10000px !important;
+}
+
+/* Hide Size slider on desktop, show on mobile/tablet */
+@media (min-width: 1025px) {
+    .mobile-tablet-only {
+        display: none !important;
+    }
+}
+
+/* Desktop hide using data attribute */
+@media (min-width: 1025px) {
+    [data-desktop-hide="true"] {
+        display: none !important;
+    }
+}
+
+/* Mobile UI Alignment - Prevent Stacking */
+@media (max-width: 768px) {
+
+    /* Force Apply/Color/Cancel row to stay horizontal */
+    .mobile-bottom-actions>[data-testid="stHorizontalBlock"],
+    .mobile-bottom-actions [data-testid="stHorizontalBlock"]>div {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        width: 100% !important;
+        gap: 8px !important;
+    }
+
+    /* Target columns specifically within bottom actions */
+    .mobile-bottom-actions div[data-testid="column"] {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+    }
+
+    /* Special case for the tiny color picker column */
+    .mobile-bottom-actions div[data-testid="column"]:nth-child(2) {
+        flex: 0 0 50px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+
+    /* Force Zoom row to stay horizontal */
+    .mobile-zoom-wrapper>[data-testid="stHorizontalBlock"],
+    .mobile-zoom-wrapper [data-testid="stHorizontalBlock"]>div {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        width: 100% !important;
+        gap: 5px !important;
+        align-items: center !important;
+    }
+
+    .mobile-zoom-wrapper div[data-testid="column"] {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+    }
+}
+
+/* Color Picker Mobile Sizing */
+@media (max-width: 640px) {
+    .mobile-bottom-actions [data-testid="stColorPicker"] {
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+
+    .mobile-bottom-actions [data-testid="stColorPicker"]>label {
+        display: none !important;
+    }
+}
